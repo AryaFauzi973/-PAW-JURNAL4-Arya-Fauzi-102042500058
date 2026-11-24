@@ -20,12 +20,12 @@ class MataKuliahController extends Controller
 
         $user = Auth::user();
         $search = $request->input('search');
+        $semester = $request->input('semester');
+        $sort = $request->input('sort');
 
         if ($user->isDosen()) {
-            // Dosen mengelola mata kuliah miliknya sendiri
             $query = MataKuliah::where('dosen_id', $user->id);
         } else {
-            // Mahasiswa menjelajahi seluruh katalog mata kuliah yang tersedia di LMS
             $query = MataKuliah::query();
         }
 
@@ -37,8 +37,17 @@ class MataKuliahController extends Controller
             });
         }
 
-        // TODO 4: Tambahkan logika filter berdasarkan parameter 'semester' dan pengurutan berdasarkan parameter 'sort' (nama_asc, nama_desc, sks_desc, sks_asc)
-        $query->orderBy('nama_mk');
+        if (!empty($semester)) {
+            $query->where('semester', $semester);
+        }
+
+        match ($sort) {
+            'nama_asc'  => $query->orderBy('nama_mk', 'asc'),
+            'nama_desc' => $query->orderBy('nama_mk', 'desc'),
+            'sks_desc'  => $query->orderBy('sks', 'desc'),
+            'sks_asc'   => $query->orderBy('sks', 'asc'),
+            default     => $query->orderBy('nama_mk', 'asc'),
+        };
 
         $courses = $query->with('dosen')
             ->withCount([
@@ -110,7 +119,6 @@ class MataKuliahController extends Controller
 
         $user = Auth::user();
 
-        // 1. Jika aktor adalah DOSEN
         if ($user->isDosen()) {
             if ($course->dosen_id !== $user->id) {
                 abort(403, 'Akses ditolak. Anda bukan dosen pengampu mata kuliah ini.');
@@ -127,12 +135,10 @@ class MataKuliahController extends Controller
             return view('courses.show', compact('course'));
         }
 
-        // 2. Jika aktor adalah MAHASISWA
         $studentPivot = $course->students()->where('users.id', $user->id)->first();
         $enrollmentStatus = $studentPivot ? $studentPivot->pivot->status : 'none';
 
         if ($enrollmentStatus === 'approved') {
-            // Mahasiswa resmi: muat materi dan tugas
             $course->load([
                 'dosen',
                 'materials',
@@ -142,8 +148,6 @@ class MataKuliahController extends Controller
                 'approvedStudents' => fn($q) => $q->orderBy('name'),
             ]);
         } else {
-            // Mahasiswa pending/rejected/belum daftar: HANYA muat ringkasan dosen & mata kuliah
-            // Cegah loading materi dan tugas agar tidak terekspos ke view
             $course->load('dosen');
         }
 
@@ -238,7 +242,6 @@ class MataKuliahController extends Controller
                 return back()->with('info', 'Permohonan pendaftaran Anda sudah dikirim dan sedang menunggu persetujuan Dosen.');
             }
 
-            // Jika sebelumnya pernah ditolak (rejected), izinkan mengajukan ulang
             $course->students()->updateExistingPivot($user->id, [
                 'status' => 'pending',
                 'updated_at' => now(),
